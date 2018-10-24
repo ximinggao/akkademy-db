@@ -1,6 +1,6 @@
 package com.akkademy
 
-import akka.actor.{Actor, ActorSystem, Props, Status}
+import akka.actor.{Actor, ActorRef, ActorSystem, Props, Status}
 import akka.event.Logging
 import com.akkademy.messages._
 
@@ -11,32 +11,61 @@ class AkkademyDb extends Actor {
   val log = Logging(context.system, this)
 
   override def receive: Receive = {
-    case SetRequest(key, value) =>
-      log.info("received SetRequest - key: {}, value: {}", key, value)
-      map.put(key, value)
-      sender() ! Status.Success
-    case GetRequest(key) =>
-      log.info("received GetRequest - key: {}", key)
-      val response: Option[Object] = map.get(key)
-      response match {
-        case Some(x) => sender() ! x
-        case None => sender() ! Status.Failure(new KeyNotFoundException(key))
+    case x: Connected => sender() ! x
+    case x: List[_] =>
+      x.foreach {
+        case SetRequest(key, value, senderRef) =>
+          handleSetRequest(key, value, senderRef)
+        case SetIfNotExists(key, value, senderRef) =>
+          handleSetIfNotExistsRequest(key, value, senderRef)
+        case GetRequest(key, senderRef) =>
+          handleGetRequest(key, senderRef)
+        case Delete(key, senderRef) =>
+          handleDeleteRequest(key, senderRef)
       }
-    case SetIfNotExists(key, value) =>
-      if (!map.contains(key)) {
-        map.put(key, value)
-        sender() ! Status.Success(true)
-      } else {
-        sender() ! Status.Success(false)
-      }
-    case Delete(key) =>
-      map.remove(key) match {
-        case Some(_) => sender() ! Status.Success(true)
-        case None => sender() ! Status.Success(false)
-      }
+    case SetRequest(key, value, senderRef) =>
+      handleSetRequest(key, value, senderRef)
+    case SetIfNotExists(key, value, senderRef) =>
+      handleSetIfNotExistsRequest(key, value, senderRef)
+    case GetRequest(key, senderRef) =>
+      handleGetRequest(key, senderRef)
+    case Delete(key, senderRef) =>
+      handleDeleteRequest(key, senderRef)
     case o =>
       log.info("received unknown message: {}", o)
-      Status.Failure(new ClassNotFoundException)
+      sender() ! Status.Failure(new ClassNotFoundException)
+  }
+
+  private def handleSetRequest(key: String, value: Object, senderRef: ActorRef): Unit = {
+    log.info("received SetRequest - key: {}, value: {}", key, value)
+    map.put(key, value)
+
+    (if (senderRef == ActorRef.noSender) sender() else senderRef) ! Status.Success
+  }
+
+  private def handleGetRequest(key: String, senderRef: ActorRef): Unit = {
+    log.info("received GetRequest - key: {}", key)
+    val response = map.get(key)
+    response match {
+      case Some(x) => (if (senderRef == ActorRef.noSender) sender() else senderRef) ! x
+      case None => (if (senderRef == ActorRef.noSender) sender() else senderRef) ! Status.Failure(KeyNotFoundException(key))
+    }
+  }
+
+  private def handleSetIfNotExistsRequest(key: String, value: Object, senderRef: ActorRef): Unit = {
+    if (!map.contains(key)) {
+      map.put(key, value)
+      (if (senderRef == ActorRef.noSender) sender() else senderRef) ! Status.Success(true)
+    } else {
+      (if (senderRef == ActorRef.noSender) sender() else senderRef) ! Status.Success(false)
+    }
+  }
+
+  private def handleDeleteRequest(key: String, senderRef: ActorRef): Unit = {
+    map.remove(key) match {
+      case Some(_) => (if (senderRef == ActorRef.noSender) sender() else senderRef) ! Status.Success(true)
+      case None => (if (senderRef == ActorRef.noSender) sender() else senderRef) ! Status.Success(false)
+    }
   }
 }
 
